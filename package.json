@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "view-users": "tsx scripts/view-users.ts"
+    "setup-db": "tsx scripts/setup-db.ts",
+    "view-users": "tsx scripts/view-users.ts",
+    "test-db": "tsx scripts/test-db.ts",
+    "test-email": "tsx scripts/test-email.ts"
   },
   "keywords": [],
   "author": "",
@@ -17,16 +20,18 @@
     "@stripe/stripe-js": "^8.1.0",
     "@tailwindcss/postcss": "^4.1.16",
     "@types/cheerio": "^0.22.35",
-    "better-sqlite3": "^12.4.1",
+    "@types/pg": "^8.15.5",
+    "@vercel/postgres": "^0.10.0",
     "cheerio": "^1.1.2",
+    "dotenv": "^17.2.3",
     "next": "^16.0.0",
+    "pg": "^8.16.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "resend": "^6.2.2",
     "stripe": "^19.1.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.9.1",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",

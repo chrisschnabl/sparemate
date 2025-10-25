@@ -10,9 +10,17 @@ import { fetchSpareRoomAds, getNewAds } from '@/lib/scraper';
 import { sendNewListingsEmail } from '@/lib/email';
 
 export async function GET(req: NextRequest) {
-  // Verify this request is from Vercel Cron
+  // Verify this request is from Vercel Cron or authorized manually
+  const userAgent = req.headers.get('user-agent') || '';
   const authHeader = req.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+
+  // Allow requests from:
+  // 1. Vercel Cron (has vercel-cron user agent)
+  // 2. Manual testing with CRON_SECRET (authorization header)
+  const isVercelCron = userAgent.includes('vercel-cron');
+  const isAuthorized = authHeader === `Bearer ${process.env.CRON_SECRET}`;
+
+  if (!isVercelCron && !isAuthorized) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -20,7 +28,7 @@ export async function GET(req: NextRequest) {
 
   try {
     // Get all active subscribers
-    const activeUsers = getActiveUsers();
+    const activeUsers = await getActiveUsers();
     console.log(`📊 Found ${activeUsers.length} active user(s)`);
 
     if (activeUsers.length === 0) {
@@ -69,6 +77,12 @@ export async function GET(req: NextRequest) {
 
         if (newAds.length === 0) {
           console.log(`   No new ads for ${user.email}`);
+
+          // Update last checked ad ID to current newest (no email needed)
+          const newestAdId = allAds[0].id;
+          updateLastCheckedAdId(user.id, newestAdId);
+          console.log(`   Updated last_checked_ad_id to ${newestAdId}`);
+
           results.successful++;
         } else {
           console.log(`   🆕 ${newAds.length} new ad(s) for ${user.email}`);
@@ -78,19 +92,23 @@ export async function GET(req: NextRequest) {
             await sendNewListingsEmail(user.email, newAds);
             results.notifications++;
             console.log(`   ✅ Email sent to ${user.email}`);
+
+            // Only update last_checked_ad_id if email was sent successfully
+            // This ensures we retry failed emails on the next run
+            const newestAdId = allAds[0].id;
+            updateLastCheckedAdId(user.id, newestAdId);
+            console.log(`   Updated last_checked_ad_id to ${newestAdId}`);
+
+            results.successful++;
           } catch (emailError) {
             console.error(`   ❌ Failed to send email to ${user.email}:`, emailError);
             results.errors.push(`${user.email}: Email failed`);
-            // Don't mark as failed - we'll try again next time
+            results.failed++;
+            // Don't update last_checked_ad_id - we'll retry these ads next time
+            console.log(`   ⚠️  Keeping last_checked_ad_id for retry`);
+            continue; // Skip to next user
           }
         }
-
-        // Update last checked ad ID (even if email failed, to avoid spam)
-        const newestAdId = allAds[0].id;
-        updateLastCheckedAdId(user.id, newestAdId);
-        console.log(`   Updated last_checked_ad_id to ${newestAdId}`);
-
-        results.successful++;
       } catch (error) {
         console.error(`❌ Error processing user ${user.email}:`, error);
         results.failed++;

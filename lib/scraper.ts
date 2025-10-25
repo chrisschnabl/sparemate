@@ -16,6 +16,8 @@ export interface SpareRoomAd {
   billsIncluded: boolean;
   minTerm: string | null;
   maxTerm: string | null;
+  imageUrl: string | null;
+  postedAt: string | null;
   rawText: string;
 }
 
@@ -91,57 +93,191 @@ function extractMaxTerm(text: string): string | null {
 }
 
 /**
+ * Extract posted date from text
+ */
+function extractPostedAt(text: string): string | null {
+  // Look for patterns like "Added today", "Added 2 hours ago", "Added 3 days ago"
+  const patterns = [
+    /Added\s+(today|yesterday)/i,
+    /Added\s+(\d+)\s+(hour|hours|day|days|week|weeks)\s+ago/i,
+    /Posted\s+(today|yesterday)/i,
+    /Posted\s+(\d+)\s+(hour|hours|day|days|week|weeks)\s+ago/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return match[0];
+    }
+  }
+  return null;
+}
+
+/**
  * Parse SpareRoom HTML and extract all ads
  */
 function parseSpareRoomAds(html: string): Map<string, SpareRoomAd> {
   const $ = cheerio.load(html);
   const ads = new Map<string, SpareRoomAd>();
 
-  // Find all listing items
-  $('li').each((_, element) => {
-    const $li = $(element);
-    const rawTextParts: string[] = [];
+  // Find all listing items - specifically target list items with articles
+  $('ul li article').each((_, element) => {
+    const $article = $(element);
+    const $link = $article.find('a').first();
 
-    // Collect all text from the listing
-    $li.find('*').each((_, el) => {
-      const text = $(el).text().trim();
-      if (text) {
-        rawTextParts.push(text);
+    // Check for featured label and skip if present
+    const featuredLabel = $article.find('header div p').first().text().trim();
+    if (featuredLabel && featuredLabel.toLowerCase().includes('featured')) {
+      console.log('Skipping featured listing');
+      return; // Skip this listing
+    }
+
+    const href = $link.attr('href');
+    if (!href || !href.includes('flatshare_detail.pl') || !href.includes('flatshare_id=')) {
+      return;
+    }
+
+    const match = href.match(/flatshare_id=(\d+)/);
+    if (!match) return;
+
+    const adId = match[1];
+    const fullUrl = href.startsWith('/')
+      ? `https://www.spareroom.co.uk${href}`
+      : href;
+
+    // Extract title from specific path: article/a/div/div[1]/div[2]/div/h2
+    // Try multiple selectors to find the h2 title
+    let $title = $link.find('h2').first();
+    let title = $title.text().trim();
+
+    // If title is empty or too long (likely grabbed wrong element), try class selector
+    if (!title || title.length > 200) {
+      $title = $link.find('.listing-card__title, h2.listing-card__title').first();
+      title = $title.text().trim();
+    }
+
+    // Remove "Featured" from title if present and trim all spaces
+    title = title.replace(/featured/gi, '').trim();
+
+    // Remove extra whitespace and newlines
+    title = title.replace(/\s+/g, ' ').trim();
+
+    title = title || 'No title found';
+
+    console.log('Extracted title:', title);
+
+    // Extract location from: article/a/div/div[1]/div[2]/div/p[1]
+    const $locationEl = $link.find('div div:nth-child(2) div p').first();
+    const location = $locationEl.text().trim() || null;
+
+    // Extract price from: article/a/div/div[1]/div[2]/div/p[2] or p.listing-card__price
+    let price: string | null = null;
+    const $priceEl = $link.find('p.listing-card__price').first();
+    if ($priceEl.length > 0) {
+      price = $priceEl.text().trim();
+    } else {
+      // Fallback: try second <p> tag
+      const $priceAlt = $link.find('div div:nth-child(2) div p:nth-child(2)').first();
+      if ($priceAlt.length > 0) {
+        price = $priceAlt.text().trim();
       }
-    });
+    }
 
-    // Look for the main ad link
-    $li.find('a').each((_, anchor) => {
-      const href = $(anchor).attr('href');
-      if (href && href.includes('flatshare_detail.pl') && href.includes('flatshare_id=')) {
-        const match = href.match(/flatshare_id=(\d+)/);
-        if (match) {
-          const adId = match[1];
-          const fullUrl = href.startsWith('/')
-            ? `https://www.spareroom.co.uk${href}`
-            : href;
+    // Extract image from: article/a/div/div[1]/div[1]/div[1]/img
+    let imageUrl: string | null = null;
 
-          const rawText = rawTextParts.join(' ');
-          const title = $(anchor).text().trim() || 'No title found';
+    // Find the MAIN listing image - try multiple strategies in order of priority
+    // 1. Look for image with listing-card__main-image class
+    let $img = $link.find('img.listing-card__main-image').first();
 
-          const ad: SpareRoomAd = {
-            id: adId,
-            url: fullUrl,
-            title: title.length > 15 ? title : 'No title found',
-            price: extractPrice(rawText),
-            location: extractLocation(rawText),
-            propertyType: extractPropertyType(rawText),
-            availability: extractAvailability(rawText),
-            billsIncluded: extractBillsIncluded(rawText),
-            minTerm: extractMinTerm(rawText),
-            maxTerm: extractMaxTerm(rawText),
-            rawText,
-          };
+    // 2. If not found, look for any image with "main" in its class
+    if ($img.length === 0) {
+      $img = $link.find('img[class*="main"]').first();
+    }
 
-          ads.set(adId, ad);
+    // 3. If still not found, get the first img tag
+    if ($img.length === 0) {
+      $img = $link.find('img').first();
+    }
+
+    console.log('=====================================');
+    console.log('Looking for image in listing:', adId, '-', title);
+    console.log('Image element found:', $img.length > 0);
+    console.log('Image class:', $img.attr('class'));
+
+    if ($img.length > 0) {
+      const rawSrc = $img.attr('src');
+      console.log('Raw src attribute:', rawSrc);
+      console.log('All img attributes:', {
+        src: $img.attr('src'),
+        'data-src': $img.attr('data-src'),
+        class: $img.attr('class'),
+        alt: $img.attr('alt')
+      });
+
+      // Try ALL possible image attributes
+      let src = $img.attr('src') ||
+                $img.attr('data-src') ||
+                $img.attr('data-lazy-src') ||
+                $img.attr('data-original') ||
+                $img.attr('data-srcset') ||
+                $img.attr('srcset') ||
+                null;
+
+      if (src) {
+        console.log('Before cleanup:', src);
+
+        // Clean up HTML entities (&amp; -> &)
+        src = src.replace(/&amp;/g, '&');
+
+        console.log('After HTML entity cleanup:', src);
+
+        // Take first URL from srcset if that's what we got
+        const cleanSrc = src.split(',')[0].split(' ')[0].trim();
+
+        console.log('After split/trim:', cleanSrc);
+
+        // Handle protocol-relative URLs (starting with //)
+        if (cleanSrc.startsWith('//')) {
+          imageUrl = `https:${cleanSrc}`;
+        } else if (cleanSrc.startsWith('http')) {
+          imageUrl = cleanSrc;
+        } else if (cleanSrc.startsWith('/')) {
+          imageUrl = `https://www.spareroom.co.uk${cleanSrc}`;
+        } else {
+          // Relative URL without leading slash
+          imageUrl = `https://www.spareroom.co.uk/${cleanSrc}`;
         }
+        console.log('✅ FINAL IMAGE URL:', imageUrl);
+      } else {
+        console.log('❌ Image element found but no src attribute for listing:', adId);
       }
-    });
+    } else {
+      console.log('❌ NO image element found for listing:', adId);
+      console.log('Article HTML snippet:', $article.html()?.substring(0, 500));
+    }
+    console.log('=====================================');
+
+    // Collect all text for regex extraction
+    const rawText = $article.text();
+
+    const ad: SpareRoomAd = {
+      id: adId,
+      url: fullUrl,
+      title,
+      price: price || extractPrice(rawText), // Use extracted price, fallback to regex
+      location: location || extractLocation(rawText),
+      propertyType: extractPropertyType(rawText),
+      availability: extractAvailability(rawText),
+      billsIncluded: extractBillsIncluded(rawText),
+      minTerm: extractMinTerm(rawText),
+      maxTerm: extractMaxTerm(rawText),
+      imageUrl,
+      postedAt: extractPostedAt(rawText),
+      rawText,
+    };
+
+    ads.set(adId, ad);
   });
 
   return ads;
@@ -184,8 +320,9 @@ export function getNewAds(
   lastCheckedAdId: string | null
 ): SpareRoomAd[] {
   if (!lastCheckedAdId) {
-    // If no last checked ID, return the newest ad only (to initialize)
-    return allAds.length > 0 ? [allAds[0]] : [];
+    // If no last checked ID, return empty (don't spam new users with existing ads)
+    // The cron job will initialize their last_checked_ad_id to the current newest
+    return [];
   }
 
   // Find all ads with ID greater than the last checked ID

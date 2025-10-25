@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/cron.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/cron",
+      "dest": "api/cron.py"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "*/5 * * * *"
+    }
+  ],
+  "env": {
+    "DATABASE_PATH": "@database_path",
+    "RESEND_API_KEY": "@resend_api_key",
+    "EMAIL_FROM": "@email_from",
+    "CRON_SECRET": "@cron_secret",
+    "REQUEST_TIMEOUT": "30",
+    "DELAY_BETWEEN_USERS": "1.0",
+    "LOG_LEVEL": "INFO"
+  }
+}
